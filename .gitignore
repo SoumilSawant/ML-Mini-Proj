@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Tests / tooling
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logion runtime artifacts
+artifacts/
+
+# Hugging Face cache
+.huggingface/

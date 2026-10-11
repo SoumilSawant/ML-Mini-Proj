@@ -1,0 +1,13 @@
+# Logion: Machine Learning for Greek Philology
+
+Runtime dependencies. `transformers` is only needed at runtime when actual
+Hugging Face models are loaded; the pure Python/PyTorch utilities work with
+just `torch` and `numpy`.
+
+torch>=2.0
+numpy>=1.24
+transformers>=4.38
+tqdm>=4.65
+
+# Development / testing
+pytest>=7.0

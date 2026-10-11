@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "logion-philology"
+version = "0.1.0"
+description = "Machine learning for premodern Greek philology: scribal error detection and gap filling."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "torch>=2.0",
+    "numpy>=1.24",
+    "transformers>=4.38",
+    "tqdm>=4.65",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+include = ["logion*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
