@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import logging
 import random
+import sys
 import time
 from pathlib import Path
 
@@ -36,6 +37,7 @@ from logion import (
     span_character_length,
 )
 from logion.features import build_gap_features
+from logion.data import read_corpus
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("logion-demo")
@@ -94,7 +96,8 @@ def generate_gap(sentence: str, rng: random.Random) -> tuple[str, int, str] | No
 
 
 def build_training_set(
-    tokenizer, filler: GapFiller, num_examples: int, beam_size: int, top_k: int, seed: int
+    tokenizer, filler: GapFiller, num_examples: int, beam_size: int, top_k: int, seed: int,
+    corpus: list[str] | None = None,
 ) -> tuple[list[list[float]], list[int]]:
     rng = random.Random(seed)
     features: list[list[float]] = []
@@ -104,7 +107,7 @@ def build_training_set(
 
     while made < num_examples and attempts < num_examples * 50:
         attempts += 1
-        sentence = rng.choice(CORPUS)
+        sentence = rng.choice(corpus or CORPUS)
         gap = generate_gap(sentence, rng)
         if gap is None:
             continue
@@ -132,7 +135,8 @@ def build_training_set(
     return features, labels
 
 
-def demo_gap_filling(filler: GapFiller, tokenizer, seed: int, beam_size: int, top_k: int) -> None:
+def demo_gap_filling(filler: GapFiller, tokenizer, seed: int, beam_size: int, top_k: int,
+                     corpus: list[str]) -> None:
     print("\n" + "=" * 70)
     print("GAP FILLING — held-out gaps")
     print("=" * 70)
@@ -141,7 +145,7 @@ def demo_gap_filling(filler: GapFiller, tokenizer, seed: int, beam_size: int, to
     tested = 0
     hits_top1 = hits_top5 = 0
 
-    for sentence in CORPUS:
+    for sentence in corpus:
         if tested >= 3:
             break
         gap = generate_gap(sentence, rng)
@@ -215,6 +219,10 @@ def demo_error_detection(detector: ScribalErrorDetector, tokenizer, beam_size: i
 
 
 def main() -> None:
+    # Windows consoles often default to cp1252, while Greek output is part of
+    # the demo's purpose.  Do not let reporting fail after successful inference.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--examples", type=int, default=8, help="training gaps to generate")
     parser.add_argument("--epochs", type=int, default=50, help="FCNN training epochs")
@@ -223,13 +231,19 @@ def main() -> None:
     parser.add_argument("--eval-beam-size", type=int, default=10, help="evaluation beam size")
     parser.add_argument("--eval-top-k", type=int, default=10, help="evaluation top-k")
     parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument("--model-name", default=MODEL_NAME, help="Hugging Face model or local checkpoint")
+    parser.add_argument("--corpus", help="optional UTF-8 corpus (one passage per line)")
     args = parser.parse_args()
 
     t_start = time.time()
 
-    print(f"\nLoading {MODEL_NAME} ...")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-    model = AutoModelForMaskedLM.from_pretrained(MODEL_NAME)
+    corpus = read_corpus(args.corpus) if args.corpus else CORPUS
+    print(f"\nLoading {args.model_name} ...")
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+        model = AutoModelForMaskedLM.from_pretrained(args.model_name)
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise SystemExit(f"Could not load model {args.model_name!r}: {exc}") from exc
     model.eval()
     print(f"loaded model & tokenizer in {time.time() - t_start:.1f}s")
 
@@ -245,16 +259,20 @@ def main() -> None:
     print(f"\nGenerating {args.examples} artificial gaps and beam probabilities ...")
     t0 = time.time()
     features, labels = build_training_set(
-        tokenizer, filler, args.examples, args.beam_size, args.top_k, args.seed
+        tokenizer, filler, args.examples, args.beam_size, args.top_k, args.seed, corpus
     )
     print(f"feature generation took {time.time() - t0:.1f}s")
 
     print(f"\nTraining the gap-length FCNN ({args.epochs} epochs) ...")
-    estimator = GapLengthEstimator(hidden_dim=config.hidden_dim, dropout=config.dropout)
     history = filler.fit_length_estimator(features, labels, epochs=args.epochs, verbose=True, seed=args.seed)
     print(f"final loss: {history[-1]:.4f} (first: {history[0]:.4f})")
     ARTIFACTS.mkdir(exist_ok=True)
-    estimator.save(str(ARTIFACTS / "length_estimator.pt"))
+    # Save the exact instance trained above.  A separate estimator here would
+    # contain random, untrained weights (the original prototype bug).
+    filler.length_estimator.save(str(ARTIFACTS / "length_estimator.pt"))
+    reloaded = GapLengthEstimator(hidden_dim=config.hidden_dim, dropout=config.dropout)
+    reloaded.load(str(ARTIFACTS / "length_estimator.pt"))
+    print("verified saved estimator can be loaded")
     print(f"saved estimator -> {ARTIFACTS / 'length_estimator.pt'}")
 
     detector = ScribalErrorDetector(model, tokenizer, device="cpu", config=ScribalErrorConfig())
@@ -264,7 +282,7 @@ def main() -> None:
         tokenizer,
         seed=args.seed + 1,
         beam_size=args.eval_beam_size,
-        top_k=args.eval_top_k,
+        top_k=args.eval_top_k, corpus=corpus,
     )
     demo_error_detection(detector, tokenizer, beam_size=args.eval_beam_size)
 

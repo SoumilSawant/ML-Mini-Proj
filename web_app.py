@@ -35,24 +35,27 @@ logger = logging.getLogger("logion-web")
 class LogionService:
     """Owns the shared tokenizer, model, and Logion pipelines."""
 
-    def __init__(self) -> None:
+    def __init__(self, model_name: str = MODEL_NAME, artifact_path: Path = ARTIFACT_PATH) -> None:
         self._lock = threading.Lock()
         self.ready = False
         self.error: str | None = None
         self.filler: GapFiller | None = None
         self.detector: ScribalErrorDetector | None = None
-        self._load()
+        self._load(model_name, artifact_path)
 
-    def _load(self) -> None:
+    def _load(self, model_name: str, artifact_path: Path) -> None:
         try:
-            logger.info("Loading %s ...", MODEL_NAME)
-            tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-            model = AutoModelForMaskedLM.from_pretrained(MODEL_NAME)
+            logger.info("Loading %s ...", model_name)
+            tokenizer = AutoTokenizer.from_pretrained(model_name)
+            model = AutoModelForMaskedLM.from_pretrained(model_name)
             model.eval()
 
             estimator = GapLengthEstimator()
-            if ARTIFACT_PATH.exists():
-                estimator.load(str(ARTIFACT_PATH))
+            if not artifact_path.exists():
+                raise FileNotFoundError(
+                    f"Estimator artifact not found: {artifact_path}. Run run_demo.py first."
+                )
+            estimator.load(str(artifact_path))
 
             self.filler = GapFiller(
                 {size: model for size in (2, 3, 4, 5)},
@@ -280,9 +283,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--model-name", default=MODEL_NAME)
+    parser.add_argument("--artifact", type=Path, default=ARTIFACT_PATH)
     args = parser.parse_args()
 
-    service = LogionService()
+    service = LogionService(args.model_name, args.artifact)
     RequestHandler.service = service
     server = ThreadingHTTPServer((args.host, args.port), RequestHandler)
     logger.info("Open http://%s:%d", args.host, args.port)

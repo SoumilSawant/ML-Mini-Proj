@@ -1,5 +1,9 @@
 # Logion: Machine Learning for Greek Philology
 
+> **Status:** reproducible research infrastructure and prototype, not a full
+> reproduction. The paper's Psellus data and compatible fine-tuned checkpoints
+> are not distributed here.
+
 A production-oriented implementation of the **Logion** framework described in
 Cowen-Breen, Brooks, Haubold & Graziosi, *Logion: Machine Learning for Greek
 Philology* (arXiv:2305.01099). Logion assists philologists working on premodern
@@ -133,6 +137,48 @@ any BERT checkpoint:
 python -m pytest
 ```
 
+The suite is offline and uses fake tokenizers/models. It covers persistence,
+model-size selection, exact character filtering, invalid inputs, multi-token
+scoring, artificial gaps, and metric calculations.
+
+## Data preparation and training
+
+Datasets are deliberately external. Provide a UTF-8 text file with one passage
+per line; do not commit TLG, Psellus, or other restricted material.
+
+```bash
+python scripts/prepare_gaps.py corpus.txt gaps.jsonl --count 100 --seed 2026
+```
+
+The reusable `logion.data`, `logion.pipeline`, and `logion.models` APIs create
+artificial gaps, generate 78-dimensional FCNN features, train the estimator,
+and save it. The `scripts/train_length_estimator.py` CLI now makes a seeded
+train/validation split, reports held-out top-1 gap-token-count accuracy, and
+writes a `.metrics.json` sidecar. If JSONL feature records include `source_id`,
+the split is grouped by source so examples from the same source cannot leak
+across train and validation. Without `source_id`, splitting is per record and
+may overstate generalization when records share a source.
+
+```bash
+python scripts/train_length_estimator.py features.jsonl artifacts/length_estimator.pt \
+  --epochs 50 --validation-fraction 0.1 --seed 2026
+```
+
+Feature records must contain `features` (78 floats) and `label` (the paper's
+`gap_toks - 1`, an integer from 0 to 6). Generate train and validation gaps
+from separate corpus splits before extracting features for a paper-style
+evaluation. The separate 2/3/4/5-mask model training remains a configurable
+checkpoint/fine-tuning step because the paper's data and compute are not
+available here.
+
+## Evaluation
+
+Use `logion.evaluation.ranking_metrics` and `grouped_accuracy` in experiment
+scripts to calculate top-1/5/10, correction recovery, precision/recall, and
+grouped gap accuracy. A missing exact-length suggestion is represented by
+`None`, never counted as a hit. No dictionary or restricted word list is
+bundled; provide one to an experiment when frequency filtering is required.
+
 ## Running the local web app
 
 The project includes a local browser interface for gap reconstruction and
@@ -140,12 +186,21 @@ scribal-error detection. It loads the public Ancient Greek masked-language
 model once, then serves the UI at `http://127.0.0.1:8000`.
 
 ```bash
-python web_app.py
+python web_app.py --artifact artifacts/length_estimator.pt
 ```
 
 Open `http://127.0.0.1:8000` in a browser. The first startup may take a few
 seconds while the model is loaded from Hugging Face. Use `Ctrl+C` to stop the
 server.
+
+## Limitations and reproducibility
+
+The public `wantuta/bert_ancient_greek_mlm` demo is not the paper's Psellus-
+fine-tuned model. Tokenizer vocabulary, checkpoint versions, corpus licenses,
+random seeds, hardware, and beam-search settings affect results. Demo held-out
+numbers are toy measurements only; no paper accuracy is claimed. A paper-style
+run requires compatible checkpoints, the licensed corpus, a documented split,
+and recorded software/configuration versions.
 
 ## Notable design points
 
